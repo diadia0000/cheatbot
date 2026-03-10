@@ -1,3 +1,7 @@
+networks:
+  cheet_net:
+    driver: bridge
+
 services:
   vllm_server:
     image: vllm/vllm-openai:latest-cu130
@@ -19,6 +23,8 @@ services:
     command: >
       --model /models/Qwen2.5-14B-Instruct-AWQ --quantization awq --max-model-len 32768 --gpu-memory-utilization 0.9
     shm_size: '16gb'
+    networks:
+      - cheet_net
 
   fastapi_backend:
     build:
@@ -32,18 +38,32 @@ services:
     environment:
       - VLLM_API_URL=http://vllm_server:8000/v1
       - MODEL_NAME=/models/Qwen2.5-14B-Instruct-AWQ
+      - FAL_KEY=${FAL_KEY}
     depends_on:
       - vllm_server
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - cheet_net
 
   streamlit_frontend:
     build:
       context: ./frontend
     container_name: streamlit_frontend
     ports:
-      - "127.0.0.1:8501:8501"
+      - "0.0.0.0:8501:8501"
     volumes:
       - ./frontend:/app
     environment:
       - BACKEND_API_URL=http://fastapi_backend:8080
     depends_on:
-      - fastapi_backend
+      fastapi_backend:
+        condition: service_healthy
+    restart: on-failure
+    networks:
+      - cheet_net

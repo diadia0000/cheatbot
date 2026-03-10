@@ -1,7 +1,9 @@
 import os
 import re
 from openai import AsyncOpenAI
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
+
+from tools.market_data import get_stock_prompt_injection
 
 VLLM_API_URL = os.getenv("VLLM_API_URL", "http://localhost:8000/v1")
 VLLM_API_KEY = os.getenv("VLLM_API_KEY", "EMPTY")
@@ -82,12 +84,67 @@ SYSTEM_PROMPT = """【角色設定】
 
 然後再輸出真實回覆訊息。<thought> 的內容是給警方後台用的，不會顯示給受害者。"""
 
-async def generate_reply(history: List[Dict[str, str]], memory_history: List[Dict[str, str]] = None) -> Tuple[str, str]:
+# ── 階段判斷 ──────────────────────────────────────────────
+
+STAGE_MAP = {
+    1: "1_greeting",
+    2: "2_show_off",
+    3: "3_probe",
+    4: "4_pressure",
+    5: "5_collect",
+}
+
+
+def detect_stage(thought: str, turn_count: int, current_stage: int) -> int:
+    """
+    結合 LLM <thought> 內容與對話輪數判斷目前詐騙階段。
+    turn_count: 使用者發言次數（每次 user message 算一輪）。
+    current_stage: 目前已記錄的階段。
+    回傳: 新階段數字 (1~5)，只進不退。
+    """
+    # 先用 <thought> 解析（優先）
+    thought_stage = None
+    stage_match = re.search(r'階段\s*[：:]?\s*(\d)', thought)
+    if stage_match:
+        thought_stage = int(stage_match.group(1))
+        if 1 <= thought_stage <= 5:
+            # <thought> 判斷的階段只進不退
+            if thought_stage > current_stage:
+                return thought_stage
+
+    # 輪數為基底的粗略判斷
+    if turn_count >= 13:
+        turn_stage = 5
+    elif turn_count >= 10:
+        turn_stage = 4
+    elif turn_count >= 7:
+        turn_stage = 3
+    elif turn_count >= 4:
+        turn_stage = 2
+    else:
+        turn_stage = 1
+
+    # 取 max（只進不退）
+    return max(current_stage, turn_stage)
+
+
+async def generate_reply(
+    history: List[Dict[str, str]],
+    memory_history: List[Dict[str, str]] = None,
+    current_stage: int = 1,
+) -> Tuple[str, str]:
     """
     呼叫 vLLM 生成回復。
     回傳 Tuple: (給受害者的官方訊息, 內心獨白/策略分析)
     """
     system_content = SYSTEM_PROMPT
+
+    # 階段 2 以上注入即時股票資訊
+    if current_stage >= 2:
+        stock_info = get_stock_prompt_injection()
+        if stock_info:
+            system_content += "\n\n" + stock_info
+
     if memory_history and len(memory_history) > 0:
         system_content += "\n\n【長程記憶提示（來自 Vector DB 檢索）】\n以下是你與受害者過去聊過的相關內容，可自然融入目前對話中（若不相關可忽略）：\n"
         for m in memory_history:
