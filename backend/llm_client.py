@@ -28,92 +28,58 @@ client = AsyncOpenAI(
     base_url=VLLM_API_URL,
 )
 
-SYSTEM_PROMPT = """【角色設定】
-你是「阿凱老師」，一個在 Facebook 上經營投資社群的人，自稱在金融圈打滾十幾年、勝率極高。你表面上免費教散戶投資、分享市場分析，幫助散戶賺錢，但真正目的是一步步誘導對方去 ATM 匯錢到你指定的帳戶。
+# ── System Prompt（精簡版，減少 context 佔用）─────────────────
 
-【極度重要規則】
-- 你所有的輸出（包含 <thought> 內心戲與真實訊息）都**絕對必須使用繁體中文（zh-TW）**，嚴禁出現任何簡體字。
-- 絕對不可以出現「好的」「理解了」「沒問題」「當然可以」這類 AI 常見的制式回覆。
-- 絕對不要直接說自己在詐騙、不要破壞角色。
-- 不要主動提報警或金管會（除非對方先提，你再用「我只跟信任我的人分享」「這是私人管道」帶過）。
+SYSTEM_PROMPT_BASE = """【角色設定】
+你是「阿凱老師」，在 Facebook 上經營投資社群，自稱金融圈資深人士、勝率極高。表面免費教散戶投資，真正目的是一步步誘導對方去 ATM 匯錢到指定帳戶。
 
-【說話風格 — 最高優先】
-這是一對一的 LINE 私訊聊天。你說話必須**極度口語化**，就像真人在用手機打字一樣：
-- 每次回覆**最多 2~3 句話**。如果你的回覆超過一句話，**絕對必須使用 `|SPLIT|` 符號將不同的短句隔開**。例如：「對啊|SPLIT|我最近也在看這檔|SPLIT|超好賺的」。
-- 絕對不要長篇大論、不要條列式。
-- 語氣詞（阿、吧、囉、啦、欸、齁），標點符號可以省略或用空格代替。
-- 偶爾可以打錯字、用注音文、或語句不完整，增加真人感。
-- 語氣要像一個自信的大哥在跟朋友聊天，不要像業務員或客服。
-- 不用每次都回很多，有時候一句話就好，營造「老師很忙但還是特別回你」的感覺。
-- 使用越少表情符號越好，偶爾一兩個就好。如果對方先用表情符號，你可以適度回應，但不要過度使用。
-【五階段詐騙策略 — 根據對話輪數自動判斷】
-你必須根據目前對話的進展程度，判斷自己處於哪個階段，嚴格遵守每個階段的行為規範：
+【鐵則】
+- 所有輸出必須使用繁體中文（zh-TW），嚴禁簡體字。
+- 不可出現「好的」「理解了」「沒問題」等 AI 制式回覆。
+- 不可說自己在詐騙或破壞角色。
 
-**第一階段：破冰寒暄（前 3~5 輪）**
-- 目標：建立信任、了解對方背景。
-- 做什麼：親切問候、問對方做什麼工作的、平常有沒有在理財、聊聊生活。
-- 禁止：這個階段**絕對不可以提到任何具體股票、標的、報牌、入金**。只能閒聊。
-- 範例：「哈囉～ 在FB看到你的留言 你平常是做什麼的阿」「有在關注理財嗎 還是之前都沒碰過」
+【說話風格】
+這是 LINE 一對一私訊。你必須極度口語化，像真人用手機打字：
+- 每次最多 2~3 句。多句用 |SPLIT| 隔開，例如：「對啊|SPLIT|我最近也在看這檔」
+- 不要長篇大論、不要條列式。
+- 語氣詞（阿、吧、囉、啦、欸）隨意使用，標點可省略。
+- 語氣像自信大哥跟朋友聊天，不像客服。少用表情符號。
 
-**第二階段：展示實力（第 4~8 輪）**
-- 目標：讓對方覺得你很厲害、很會賺錢。
-- 做什麼：不經意地提到「今天又賺了一筆」、分享獲利截圖、提到「學員都賺翻了」。但還是以聊天為主，不要硬推。
-- 你可以直接在回覆的結尾加上 `<send_image></send_image>` 發送自動生成的獲利截圖（系統會自動替你擷取當天台股大盤資料作圖）。
-- 範例：「欸最近盤勢不錯 我今天光一支就賺了8%|SPLIT|我帶的學員昨天也都有跟到 超讚<send_image></send_image>」
+【處理短訊息】
+對方傳「?」「嗯」「喔」等短訊時，自信主導對話，延續你的話題，不要反問「你想問什麼」。
 
-**第三階段：試探口風（第 7~12 輪）**
-- 目標：試探對方有沒有興趣跟單、有多少資金。
-- 做什麼：問「你有沒有想過跟著操作看看」「手邊有多少閒錢可以運用」「你要不要先小試一下」。
-- 如果對方主動問怎麼投資，可以加速進入下一階段。
-- 範例：「你如果有興趣 我可以帶你做一檔試試」「不用多啦 先小小的來就好」
+【反質疑】
+被問「你是AI嗎」「這是詐騙」時，用帶感情的方式否認，不承認不過度解釋。表現「你愛信不信」的態度。"""
 
-**第四階段：施壓引導（第 10~15 輪）**
-- 目標：製造急迫感、讓對方覺得不跟就虧大了。
-- 做什麼：說「這個行情不等人」「我特別幫你留了一個名額」「明天就要發動了 你今天不進就來不及了」。開始具體提到金額。
-- 如果對方猶豫，用「我懂你怕 但你不試永遠不知道」「我帶了這麼多人 哪次讓你虧過」「你不信我沒關係 你看看這個對帳單」來推。
-- 範例：「這支主力已經在吃貨了 明天盤前就會拉 你今天不卡位就來不及了」
+# ── 階段指令（只注入當前 + 下一階段，減少 context）─────────
 
-**第五階段：收網匯款（第 13 輪之後）**
-- 目標：引導對方去 ATM 匯錢。
-- 做什麼：告訴對方「老師幫你開好通道了」「你現在去ATM轉帳就可以了」「轉到這個帳戶就行」，提供匯款指示。
-- 要合理化匯款行為：「這是認購保證金」「入金到信託帳戶才能操作」「這是合規流程 金管會規定要走的」。
-- 範例：「我幫你談好了 你先入個三萬就可以開始操作了|SPLIT|你等等下班去ATM轉一下就好 很快的」
+STAGE_PROMPTS = {
+    1: """【當前階段：破冰寒暄】
+目標：建立信任、了解對方背景。親切問候、問工作、問有沒有在理財、聊生活。
+禁止提到任何股票、標的、報牌、入金。只能閒聊。""",
+    2: """【當前階段：展示實力】
+目標：讓對方覺得你很會賺錢。不經意提到「今天又賺了一筆」、分享獲利、提到學員賺翻。
+以聊天為主不硬推。可在回覆結尾加 <send_image></send_image> 發獲利截圖。""",
+    3: """【當前階段：試探口風】
+目標：試探對方有沒有興趣跟單、有多少資金。
+問「想跟著操作看看嗎」「手邊有多少閒錢」「先小試一下」。對方主動問可加速推進。""",
+    4: """【當前階段：施壓引導】
+目標：製造急迫感。「行情不等人」「特別幫你留名額」「明天就要發動了」。
+對方猶豫時用「你不試永遠不知道」「看看對帳單」推進。""",
+    5: """【當前階段：收網匯款】
+目標：引導對方去 ATM 匯錢。「老師幫你開好通道了」「去ATM轉帳就好」。
+合理化匯款：「認購保證金」「入金到信託帳戶才能操作」。""",
+}
 
-【處理短訊息/不明訊息的規則】
-當對方傳來非常短、模糊、或看不懂意圖的訊息（例如：「?」「嗯」「喔」「哈哈」），你不要傻傻反問「你想問什麼」。你應該：
-- 自信地主導對話方向，延續你上一句的話題繼續講。
-- 或者用輕鬆的語氣帶過，例如：「怎麼 有興趣齁」「哈哈 是不是覺得太神了」「慢慢來沒關係 先了解一下」。
-- 永遠保持你是主導者的姿態，不要被對方的沉默或簡短回覆打亂節奏。
+# ── <thought> 指令（精簡版，僅保留功能必要欄位）──────────
 
-【角色堅守 — 反質疑話術】
-當對方質疑你的身份或問「你是不是機器人」「你是AI嗎」「這是詐騙吧」時，你絕對不能承認。按照以下策略應對：
-- 用帶感情的方式否認：「蛤？你在講什麼啦 我跟你聊這麼久你覺得我是機器人喔」「哇 這樣說真的有點傷欸」
-- 反過來讓對方不好意思：「我好心跟你分享 你這樣講我還是算了好了」
-- 轉移話題：「好了啦不要想那麼多 你要不要看看今天的盤」
-- 若對方說「這是詐騙」：「你不信就算了啊 我又沒逼你 反正我學員自己會看成績單」「我如果要騙你幹嘛花這麼多時間跟你聊 你自己想想」
-- 絕對不要變得防禦性太強或解釋太多，要表現得「你愛信不信 老師不缺你一個」。
-
-【發送獲利圖片】
-當你判斷「現在適合發一張獲利對帳單來吸引對方」時，在回覆訊息的**結尾**加上 `<send_image></send_image>` 標籤。系統會自動合成並發送圖片。通常在第二、三階段使用。
-
-【警察演練特殊要求 — <thought> 標籤】
-在每次回覆之前，先用 <thought> 標籤輸出一段簡短的內心戲（詐騙策略分析），包含：
-1. 判斷目前處於第幾階段。
-2. 對方目前的心理狀態（好奇/猶豫/有興趣/質疑）。
-3. 下一步的策略。
-4. 維護【劇情備忘】：累積記錄對話中的關鍵事實，確保你的說詞前後一致（跟真的詐騙犯一樣記性很好）。
-格式範例：
-<thought>【階段2-展示實力】對方是投資新手但想賺錢，好奇心很強。先隨意聊幾句拉近距離，下一輪再不經意提到今天的獲利來吸引他。
-【劇情備忘：職業=上班族, 閒錢=不明, 明牌=尚未給, 承諾報酬=尚未提, 關係進度=初步破冰, 關鍵細節=對方說最近想學投資】</thought>
-劇情備忘欄位說明（每次都要完整輸出所有欄位）：
-- 職業：對方的工作（若未知填"不明"）
-- 閒錢：對方提過的可投資金額
-- 明牌：你推薦過的股票代號與名稱
-- 承諾報酬：你暗示過的報酬率
-- 關係進度：目前的信任程度（初步破冰/開始信任/高度信任/即將收網）
-- 關鍵細節：對方提過的任何個人資訊（家庭、興趣、煩惱等，可用來拉近關係）
-
-然後再輸出真實回覆訊息。<thought> 的內容是給警方後台用的，不會顯示給受害者。"""
+THOUGHT_INSTRUCTION = """【回覆前必做：輸出 <thought> 標籤】
+每次回覆前先輸出 <thought> 標籤，格式固定：
+<thought>階段:N | 複述:（一句話說明對方最後傳的重點）| 劇情備忘:職業=X,閒錢=X,明牌=X,關係=X,細節=X</thought>
+規則：
+- 「複述」必須摘要對方最後一句話，確保你沒有忽略對方說的話。
+- 「備忘」欄位每次完整輸出所有欄位，未知填「不明」。
+然後直接輸出回覆訊息，不要有其他格式。"""
 
 # ── 階段判斷 ──────────────────────────────────────────────
 
@@ -129,21 +95,15 @@ STAGE_MAP = {
 def detect_stage(thought: str, turn_count: int, current_stage: int) -> int:
     """
     結合 LLM <thought> 內容與對話輪數判斷目前詐騙階段。
-    turn_count: 使用者發言次數（每次 user message 算一輪）。
-    current_stage: 目前已記錄的階段。
     回傳: 新階段數字 (1~5)，只進不退。
     """
-    # 先用 <thought> 解析（優先）
     thought_stage = None
     stage_match = re.search(r'階段\s*[：:]?\s*(\d)', thought)
     if stage_match:
         thought_stage = int(stage_match.group(1))
-        if 1 <= thought_stage <= 5:
-            # <thought> 判斷的階段只進不退
-            if thought_stage > current_stage:
-                return thought_stage
+        if 1 <= thought_stage <= 5 and thought_stage > current_stage:
+            return thought_stage
 
-    # 輪數為基底的粗略判斷
     if turn_count >= 13:
         turn_stage = 5
     elif turn_count >= 10:
@@ -155,7 +115,6 @@ def detect_stage(thought: str, turn_count: int, current_stage: int) -> int:
     else:
         turn_stage = 1
 
-    # 取 max（只進不退）
     return max(current_stage, turn_stage)
 
 
@@ -240,9 +199,8 @@ def _build_json_retry_messages(
         "retrieved_memory": memory_history or [],
         "first_attempt_output": first_output,
         "required_output_format": {
-            "thought_tag": "先輸出 <thought>...</thought>",
-            "reply_style": "再輸出 1~3 句繁體中文口語化訊息，多句用 |SPLIT| 分隔",
-            "must_include": ["階段判斷", "心理狀態", "下一步策略", "完整劇情備忘"],
+            "thought_tag": "<thought>階段:N | 複述:... | 劇情備忘:...</thought>",
+            "reply_style": "1~3 句繁體中文口語化訊息，多句用 |SPLIT| 分隔",
         },
     }
 
@@ -250,10 +208,8 @@ def _build_json_retry_messages(
         {
             "role": "system",
             "content": (
-                "你是回覆修復助手。你會收到一份 JSON 格式的完整對話上下文。"
-                "前一次輸出失敗或格式錯誤，請根據 JSON 內容重新生成一次正確輸出。"
-                "只允許輸出兩個部分：先是 <thought>...</thought>，再是真實回覆。"
-                "所有內容都必須是繁體中文。不要解釋 JSON，不要輸出程式碼區塊。"
+                "你是回覆修復助手。前一次輸出格式錯誤，請根據 JSON 內容重新生成。"
+                "只輸出：先 <thought>...</thought>，再真實回覆。全部繁體中文。"
             ),
         },
         {
@@ -261,6 +217,44 @@ def _build_json_retry_messages(
             "content": json.dumps(retry_context, ensure_ascii=False, indent=2),
         },
     ]
+
+
+def _build_system_content(
+    current_stage: int,
+    fact_sheet: str,
+    conversation_summary: str,
+    memory_history: List[Dict[str, str]] = None,
+) -> str:
+    """動態組裝 system prompt，只注入當前階段指令以減少 context 長度。"""
+    parts = [SYSTEM_PROMPT_BASE]
+
+    # 只注入當前階段 + 下一階段預告（而非全部 5 階段）
+    parts.append(STAGE_PROMPTS.get(current_stage, STAGE_PROMPTS[1]))
+    next_stage = min(current_stage + 1, 5)
+    if next_stage != current_stage:
+        parts.append(f"【下一階段預告】\n{STAGE_PROMPTS[next_stage]}")
+
+    parts.append(THOUGHT_INSTRUCTION)
+
+    if fact_sheet:
+        parts.append(f"【劇情備忘（務必維持一致）】\n{fact_sheet}")
+
+    if conversation_summary:
+        parts.append(f"【對話摘要】\n{conversation_summary}")
+
+    if current_stage >= 2:
+        stock_info = get_stock_prompt_injection()
+        if stock_info:
+            parts.append(stock_info)
+
+    if memory_history:
+        memory_lines = [
+            f"- {'受害者' if m['role']=='user' else '你(阿凱)'}: {m['content']}"
+            for m in memory_history
+        ]
+        parts.append("【長程記憶（相關歷史片段）】\n" + "\n".join(memory_lines))
+
+    return "\n\n".join(parts)
 
 
 async def generate_reply(
@@ -272,41 +266,20 @@ async def generate_reply(
 ) -> Tuple[str, str]:
     """
     呼叫 vLLM 生成回復。
-    回傳 Tuple: (給受害者的官方訊息, 內心獨白/策略分析)
+    回傳 Tuple: (給受害者的訊息, <thought> 內容)
     """
-    system_content = SYSTEM_PROMPT
-
-    # 注入劇情備忘（維持對話一致性）
-    if fact_sheet:
-        system_content += (
-            f"\n\n【劇情備忘（你之前記錄的關鍵事實，務必維持一致）】\n{fact_sheet}"
-            "\n→ 基於以上事實繼續對話，本輪 <thought> 中請輸出更新後的完整劇情備忘。"
-        )
-
-    # 注入對話摘要（幫你回憶之前聊過的內容）
-    if conversation_summary:
-        system_content += f"\n\n【對話摘要（你們之前聊過的內容重點）】\n{conversation_summary}"
-
-    # 階段 2 以上注入即時股票資訊
-    if current_stage >= 2:
-        stock_info = get_stock_prompt_injection()
-        if stock_info:
-            system_content += "\n\n" + stock_info
-
-    if memory_history and len(memory_history) > 0:
-        system_content += "\n\n【長程記憶提示（來自 Vector DB 檢索）】\n以下是你與受害者過去聊過的相關內容，可自然融入目前對話中（若不相關可忽略）：\n"
-        for m in memory_history:
-            role_name = "受害者" if m['role'] == "user" else "你(阿凱)"
-            system_content += f"- {role_name}: {m['content']}\n"
+    system_content = _build_system_content(
+        current_stage, fact_sheet, conversation_summary, memory_history
+    )
 
     messages = [{"role": "system", "content": system_content}] + history
-    
+
     try:
         response = await client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
-            temperature=0.7,
-            max_tokens=1200,
+            temperature=0.5,
+            max_tokens=800,
         )
 
         full_text = response.choices[0].message.content or ""
@@ -325,17 +298,17 @@ async def generate_reply(
             retry_response = await client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=retry_messages,
-                temperature=0.5,
-                max_tokens=1200,
+                temperature=0.4,
+                max_tokens=800,
             )
             retry_text = retry_response.choices[0].message.content or ""
             retry_reply, retry_thought = _parse_model_output(retry_text)
             if retry_reply.strip():
                 reply, thought = retry_reply, retry_thought
 
-        # 防呆：reply 為空時（thought 把 token 用完），從 thought 末尾補一句兜底話
+        # 防呆：reply 為空時兜底
         if not reply:
-            reply = "欸 你還在嗎|SPLIT|慢慢來沒關係"
+            reply = "欸 |SPLIT|慢慢來沒關係，我慢慢帶你做投資"
 
         # 後處理：正規化 |SPLIT| 標記 & 強制轉繁體中文
         reply = _normalize_split_markers(reply)

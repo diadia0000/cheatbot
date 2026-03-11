@@ -21,7 +21,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
     command: >
-      --model /models/Qwen2.5-14B-Instruct-AWQ --quantization awq --max-model-len 32768 --gpu-memory-utilization 0.7
+      --model /models/Qwen2.5-32B-Instruct-AWQ --quantization awq_marlin --max-model-len 20480 --gpu-memory-utilization 0.9
     shm_size: '16gb'
     networks:
       - cheet_net
@@ -35,7 +35,7 @@ services:
       - ./data:/data
     environment:
       - VLLM_API_URL=http://vllm_server:8000/v1
-      - MODEL_NAME=/models/Qwen2.5-14B-Instruct-AWQ
+      - MODEL_NAME=/models/Qwen2.5-32B-Instruct-AWQ
       - FAL_KEY=${FAL_KEY}
       - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
       - LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN}
@@ -69,24 +69,5 @@ services:
       retries: 5
       start_period: 5s
     restart: unless-stopped
-    networks:
-      - cheet_net
-
-  streamlit_frontend:
-    build:
-      context: ./frontend
-    container_name: streamlit_frontend
-    ports:
-      - "127.0.0.1:8501:8501"
-    volumes:
-      - ./frontend:/app
-    environment:
-      - BACKEND_API_URL=http://fastapi_backend:8080
-    depends_on:
-      fastapi_backend:
-        condition: service_healthy
-    restart: on-failure
-    profiles:
-      - ui
     networks:
       - cheet_net

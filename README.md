@@ -1,15 +1,17 @@
 # Cheet Bot 專案說明
 
-這是一個詐騙對話模擬系統，包含：
-- `frontend/`：Streamlit 前端（受害者視角 + 警方監控視角）
-- `backend/`：FastAPI 後端（對話邏輯、歷史紀錄、RAG 檢索、圖像生成觸發）
+這是一個詐騙對話模擬系統，透過 LINE Bot 作為使用者介面。包含：
+
+- `backend/`：FastAPI 後端（對話邏輯、歷史紀錄、RAG 檢索、圖像生成觸發、LINE Webhook 處理）
 - `models/`：本地大模型目錄（Qwen2.5-14B-Instruct-AWQ）
 - `data/`：執行時資料（SQLite / ChromaDB）
+- `ops/`：Nginx 配置等運維檔案
 - `docs/`：文件與架構圖
 
 ## 1. 架構圖（Mermaid）
 
 架構圖已轉換為 Mermaid：
+
 - `docs/architecture.md`
 
 ## 2. 推薦啟動方式（Docker Compose）
@@ -21,8 +23,8 @@ docker compose up --build
 ```
 
 啟動後預設存取位址：
-- 前端：`http://127.0.0.1:8501`
-- 後端：`http://127.0.0.1:8080`
+
+- Webhook Gateway（供 ngrok 轉發）：`http://127.0.0.1:8080`
 - vLLM OpenAI 相容介面：`http://127.0.0.1:8000/v1`
 
 停止服務：
@@ -40,20 +42,15 @@ cp .env.example .env
 ```
 
 2. 編輯 `.env`，至少填入：
+
 - `LINE_CHANNEL_SECRET`
 - `LINE_CHANNEL_ACCESS_TOKEN`
 - `FAL_KEY`（若你有使用圖片生成功能）
 
-3. 啟動服務（不啟動前端 UI）：
+3. 啟動服務：
 
 ```bash
 docker compose up -d --build
-```
-
-若要另外開啟前端監控頁（若 compose 內有 `ui` profile）：
-
-```bash
-docker compose --profile ui up -d --build
 ```
 
 4. 在主機啟動 ngrok（本機安裝版）：
@@ -75,6 +72,7 @@ https://<你的-ngrok-網址>/line/webhook
 ```
 
 說明：
+
 - `webhook_gateway` 已對外開在 `127.0.0.1:8080`，供本機 ngrok 轉發。
 - 若你使用 ngrok 隨機網域，每次重啟 ngrok 可能需要更新 LINE Console 的 Webhook URL。
 - 可使用 `./scripts/sync_line_webhook.sh` 自動同步 LINE Webhook URL。
@@ -90,31 +88,33 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
-然後分別參考：
+然後參考：
 - `backend/README.md`
-- `frontend/README.md`
 
 ## 4. 目錄結構
 
 ```text
 .
 ├── backend/
-├── frontend/
 ├── data/
 ├── docs/
 ├── models/
-├── scripts/
+├── ops/
 └── docker-compose.yml
 ```
 
 ## 5. 常見問題
 
-1. 啟動後前端無法連線後端
-- 檢查 `docker compose ps`，確認 `fastapi_backend` 正常運行。
+1. LINE Bot 無法收到回覆
+
+- 檢查 `docker compose ps`，確認 `fastapi_backend` 和 `webhook_gateway` 正常運行。
+- 確認 ngrok 已啟動且 Webhook URL 已正確設定在 LINE Developers Console。
 
 2. vLLM 啟動失敗
+
 - 檢查 GPU / NVIDIA 容器環境是否可用。
 - 確認模型路徑存在：`models/Qwen2.5-14B-Instruct-AWQ`。
 
 3. 對話歷史異常
+
 - 資料預設寫入 `data/`，可先備份後清理再重啟。
