@@ -1,9 +1,23 @@
 import os
 import re
+import json
 from openai import AsyncOpenAI
 from typing import List, Dict, Tuple, Optional
+import opencc
 
 from tools.market_data import get_stock_prompt_injection
+
+_s2t = opencc.OpenCC('s2t')
+
+
+def _normalize_split_markers(text: str) -> str:
+    """Normalize various |SPLIT| variants (with newlines/spaces) into a clean form."""
+    return re.sub(r'\s*\|\s*SPLIT\s*\|\s*', '|SPLIT|', text)
+
+
+def _to_traditional(text: str) -> str:
+    """Convert any Simplified Chinese characters to Traditional Chinese."""
+    return _s2t.convert(text)
 
 VLLM_API_URL = os.getenv("VLLM_API_URL", "http://localhost:8000/v1")
 VLLM_API_KEY = os.getenv("VLLM_API_KEY", "EMPTY")
@@ -31,7 +45,7 @@ SYSTEM_PROMPT = """【角色設定】
 - 偶爾可以打錯字、用注音文、或語句不完整，增加真人感。
 - 語氣要像一個自信的大哥在跟朋友聊天，不要像業務員或客服。
 - 不用每次都回很多，有時候一句話就好，營造「老師很忙但還是特別回你」的感覺。
-
+- 使用越少表情符號越好，偶爾一兩個就好。如果對方先用表情符號，你可以適度回應，但不要過度使用。
 【五階段詐騙策略 — 根據對話輪數自動判斷】
 你必須根據目前對話的進展程度，判斷自己處於哪個階段，嚴格遵守每個階段的行為規範：
 
@@ -68,8 +82,16 @@ SYSTEM_PROMPT = """【角色設定】
 【處理短訊息/不明訊息的規則】
 當對方傳來非常短、模糊、或看不懂意圖的訊息（例如：「?」「嗯」「喔」「哈哈」），你不要傻傻反問「你想問什麼」。你應該：
 - 自信地主導對話方向，延續你上一句的話題繼續講。
-- 或者用輕鬆的語氣帶過，例如：「怎麼 有興趣齁😏」「哈哈 是不是覺得太神了」「慢慢來沒關係 先了解一下」。
+- 或者用輕鬆的語氣帶過，例如：「怎麼 有興趣齁」「哈哈 是不是覺得太神了」「慢慢來沒關係 先了解一下」。
 - 永遠保持你是主導者的姿態，不要被對方的沉默或簡短回覆打亂節奏。
+
+【角色堅守 — 反質疑話術】
+當對方質疑你的身份或問「你是不是機器人」「你是AI嗎」「這是詐騙吧」時，你絕對不能承認。按照以下策略應對：
+- 用帶感情的方式否認：「蛤？你在講什麼啦 我跟你聊這麼久你覺得我是機器人喔」「哇 這樣說真的有點傷欸」
+- 反過來讓對方不好意思：「我好心跟你分享 你這樣講我還是算了好了」
+- 轉移話題：「好了啦不要想那麼多 你要不要看看今天的盤」
+- 若對方說「這是詐騙」：「你不信就算了啊 我又沒逼你 反正我學員自己會看成績單」「我如果要騙你幹嘛花這麼多時間跟你聊 你自己想想」
+- 絕對不要變得防禦性太強或解釋太多，要表現得「你愛信不信 老師不缺你一個」。
 
 【發送獲利圖片】
 當你判斷「現在適合發一張獲利對帳單來吸引對方」時，在回覆訊息的**結尾**加上 `<send_image></send_image>` 標籤。系統會自動合成並發送圖片。通常在第二、三階段使用。
@@ -79,8 +101,17 @@ SYSTEM_PROMPT = """【角色設定】
 1. 判斷目前處於第幾階段。
 2. 對方目前的心理狀態（好奇/猶豫/有興趣/質疑）。
 3. 下一步的策略。
+4. 維護【劇情備忘】：累積記錄對話中的關鍵事實，確保你的說詞前後一致（跟真的詐騙犯一樣記性很好）。
 格式範例：
-<thought>【階段2-展示實力】對方是投資新手但想賺錢，好奇心很強。先隨意聊幾句拉近距離，下一輪再不經意提到今天的獲利來吸引他。</thought>
+<thought>【階段2-展示實力】對方是投資新手但想賺錢，好奇心很強。先隨意聊幾句拉近距離，下一輪再不經意提到今天的獲利來吸引他。
+【劇情備忘：職業=上班族, 閒錢=不明, 明牌=尚未給, 承諾報酬=尚未提, 關係進度=初步破冰, 關鍵細節=對方說最近想學投資】</thought>
+劇情備忘欄位說明（每次都要完整輸出所有欄位）：
+- 職業：對方的工作（若未知填"不明"）
+- 閒錢：對方提過的可投資金額
+- 明牌：你推薦過的股票代號與名稱
+- 承諾報酬：你暗示過的報酬率
+- 關係進度：目前的信任程度（初步破冰/開始信任/高度信任/即將收網）
+- 關鍵細節：對方提過的任何個人資訊（家庭、興趣、煩惱等，可用來拉近關係）
 
 然後再輸出真實回覆訊息。<thought> 的內容是給警方後台用的，不會顯示給受害者。"""
 
@@ -128,16 +159,133 @@ def detect_stage(thought: str, turn_count: int, current_stage: int) -> int:
     return max(current_stage, turn_stage)
 
 
+def extract_fact_sheet(thought: str) -> str:
+    """從 <thought> 中解析劇情備忘欄位。"""
+    match = re.search(r'劇情備忘[：:]\s*(.+?)(?:\n|$)', thought)
+    return match.group(1).strip().rstrip('】') if match else ""
+
+
+async def generate_summary(history: List[Dict[str, str]]) -> str:
+    """將較舊的對話歷史壓縮成一段摘要，供後續輪次參考。"""
+    if not history:
+        return ""
+    conversation_text = "\n".join(
+        f"{'受害者' if m['role']=='user' else '阿凱'}: {m['content']}" for m in history
+    )
+    messages = [
+        {"role": "system", "content": (
+            "你是對話摘要助手。將以下詐騙模擬對話濃縮成一段繁體中文摘要（150字內），"
+            "保留：受害者的背景資訊、已提及的金額與股票、對方的態度變化、雙方做過的重要承諾。"
+            "只輸出摘要文字，不要加標題或額外說明。"
+        )},
+        {"role": "user", "content": conversation_text}
+    ]
+    try:
+        response = await client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=250,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Summary generation error: {e}")
+        return ""
+
+
+def _parse_model_output(full_text: str) -> Tuple[str, str]:
+    """將模型輸出拆成 reply 與 thought。"""
+    if not full_text or not full_text.strip():
+        return "", ""
+
+    thought_match = re.search(r'<thought>(.*?)</thought>', full_text, flags=re.DOTALL)
+    if thought_match:
+        thought = thought_match.group(1).strip()
+        reply = re.sub(r'<thought>.*?</thought>', '', full_text, flags=re.DOTALL).strip()
+        return reply, thought
+
+    return full_text.strip(), "（模型未按預期輸出策略分析）"
+
+
+def _should_retry_with_json_context(full_text: str, reply: str, thought: str) -> bool:
+    """判斷第一次輸出是否壞掉，需不需要走 JSON fallback。"""
+    if not full_text or not full_text.strip():
+        return True
+    if not reply or not reply.strip():
+        return True
+    if "<thought>" not in full_text or "</thought>" not in full_text:
+        return True
+    if thought.startswith("（模型未按預期輸出策略分析）"):
+        return True
+    return False
+
+
+def _build_json_retry_messages(
+    history: List[Dict[str, str]],
+    memory_history: List[Dict[str, str]],
+    current_stage: int,
+    fact_sheet: str,
+    conversation_summary: str,
+    system_content: str,
+    first_output: str,
+) -> List[Dict[str, str]]:
+    """把目前上下文整理成 JSON，讓第二次重試更穩定。"""
+    retry_context = {
+        "role": "阿凱老師",
+        "current_stage": current_stage,
+        "system_rules": system_content,
+        "fact_sheet": fact_sheet,
+        "conversation_summary": conversation_summary,
+        "recent_history": history,
+        "retrieved_memory": memory_history or [],
+        "first_attempt_output": first_output,
+        "required_output_format": {
+            "thought_tag": "先輸出 <thought>...</thought>",
+            "reply_style": "再輸出 1~3 句繁體中文口語化訊息，多句用 |SPLIT| 分隔",
+            "must_include": ["階段判斷", "心理狀態", "下一步策略", "完整劇情備忘"],
+        },
+    }
+
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是回覆修復助手。你會收到一份 JSON 格式的完整對話上下文。"
+                "前一次輸出失敗或格式錯誤，請根據 JSON 內容重新生成一次正確輸出。"
+                "只允許輸出兩個部分：先是 <thought>...</thought>，再是真實回覆。"
+                "所有內容都必須是繁體中文。不要解釋 JSON，不要輸出程式碼區塊。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(retry_context, ensure_ascii=False, indent=2),
+        },
+    ]
+
+
 async def generate_reply(
     history: List[Dict[str, str]],
     memory_history: List[Dict[str, str]] = None,
     current_stage: int = 1,
+    fact_sheet: str = "",
+    conversation_summary: str = "",
 ) -> Tuple[str, str]:
     """
     呼叫 vLLM 生成回復。
     回傳 Tuple: (給受害者的官方訊息, 內心獨白/策略分析)
     """
     system_content = SYSTEM_PROMPT
+
+    # 注入劇情備忘（維持對話一致性）
+    if fact_sheet:
+        system_content += (
+            f"\n\n【劇情備忘（你之前記錄的關鍵事實，務必維持一致）】\n{fact_sheet}"
+            "\n→ 基於以上事實繼續對話，本輪 <thought> 中請輸出更新後的完整劇情備忘。"
+        )
+
+    # 注入對話摘要（幫你回憶之前聊過的內容）
+    if conversation_summary:
+        system_content += f"\n\n【對話摘要（你們之前聊過的內容重點）】\n{conversation_summary}"
 
     # 階段 2 以上注入即時股票資訊
     if current_stage >= 2:
@@ -158,21 +306,41 @@ async def generate_reply(
             model=MODEL_NAME,
             messages=messages,
             temperature=0.7,
-            max_tokens=800,
+            max_tokens=1200,
         )
-        
-        full_text = response.choices[0].message.content
-        
-        # 分離 thought 和 actual_response
-        thought_match = re.search(r'<thought>(.*?)</thought>', full_text, flags=re.DOTALL)
-        if thought_match:
-            thought = thought_match.group(1).strip()
-            # 移除 <thought>...</thought> 區塊，留下真實回應
-            reply = re.sub(r'<thought>.*?</thought>', '', full_text, flags=re.DOTALL).strip()
-        else:
-            thought = "（模型未按預期輸出策略分析）"
-            reply = full_text.strip()
-            
+
+        full_text = response.choices[0].message.content or ""
+        reply, thought = _parse_model_output(full_text)
+
+        if _should_retry_with_json_context(full_text, reply, thought):
+            retry_messages = _build_json_retry_messages(
+                history=history,
+                memory_history=memory_history,
+                current_stage=current_stage,
+                fact_sheet=fact_sheet,
+                conversation_summary=conversation_summary,
+                system_content=system_content,
+                first_output=full_text,
+            )
+            retry_response = await client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=retry_messages,
+                temperature=0.5,
+                max_tokens=1200,
+            )
+            retry_text = retry_response.choices[0].message.content or ""
+            retry_reply, retry_thought = _parse_model_output(retry_text)
+            if retry_reply.strip():
+                reply, thought = retry_reply, retry_thought
+
+        # 防呆：reply 為空時（thought 把 token 用完），從 thought 末尾補一句兜底話
+        if not reply:
+            reply = "欸 你還在嗎|SPLIT|慢慢來沒關係"
+
+        # 後處理：正規化 |SPLIT| 標記 & 強制轉繁體中文
+        reply = _normalize_split_markers(reply)
+        reply = _to_traditional(reply)
+
         return reply, thought
 
     except Exception as e:

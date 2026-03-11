@@ -2,13 +2,13 @@ import os
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-import asyncio
-import random
 
 from database import init_db, save_message, get_chat_history, update_session_state, get_session_state, get_relevant_history
-from llm_client import generate_reply, detect_stage, STAGE_MAP
+from llm_client import generate_reply, detect_stage, STAGE_MAP, extract_fact_sheet, generate_summary
+from line_bot import router as line_router
 
 app = FastAPI(title="Anti-Fraud Agent Backend")
+app.include_router(line_router, prefix="/line", tags=["LINE Bot"])
 
 @app.on_event("startup")
 def on_startup():
@@ -25,7 +25,6 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: list[str]
     thought: str
-    delay_seconds: float
     image_url: str | None = None
 
 @app.post("/chat", response_model=ChatResponse)
@@ -33,23 +32,28 @@ async def chat_endpoint(req: ChatRequest):
     # 保存用戶訊息
     save_message(req.session_id, "user", req.message)
     
-    # 取得完整的對話歷史 (縮減為短期對話，避免 Token 過長)
-    history = get_chat_history(req.session_id, limit=6)
+    # 取得完整的對話歷史 (加大 limit 避免重複問已回答過的問題)
+    history = get_chat_history(req.session_id, limit=10)
     
     # 計算使用者對話輪數
     full_history = get_chat_history(req.session_id, limit=200)
     turn_count = sum(1 for m in full_history if m["role"] == "user")
     
-    # 取得目前階段
+    # 取得目前階段與累積狀態
     state = get_session_state(req.session_id)
     current_stage_str = state.get("fraud_stage", "1_greeting")
     current_stage = int(current_stage_str[0]) if current_stage_str[0].isdigit() else 1
+    fact_sheet = state.get("fact_sheet", "")
+    conversation_summary = state.get("conversation_summary", "")
     
     # 透過 RAG 從 Vector DB 取得與當下話題相關的歷史記憶
     memory_history = get_relevant_history(req.session_id, req.message, n_results=3)
     
-    # 呼叫 vLLM，傳入目前階段以決定是否注入股票資訊
-    reply, thought = await generate_reply(history, memory_history, current_stage=current_stage)
+    # 呼叫 vLLM，注入劇情備忘 + 對話摘要 + 股票資訊
+    reply, thought = await generate_reply(
+        history, memory_history, current_stage=current_stage,
+        fact_sheet=fact_sheet, conversation_summary=conversation_summary,
+    )
     
     # 更新階段判斷（結合 thought + 輪數）
     new_stage = detect_stage(thought, turn_count, current_stage)
@@ -71,16 +75,28 @@ async def chat_endpoint(req: ChatRequest):
     # 儲存 AI 回覆
     save_message(req.session_id, "assistant", " ".join(reply_segments))
     
-    # 擬真化插件：計算打字延遲
-    delay = len(reply) * 0.1 + random.uniform(1, 3)
+    # 從 thought 提取劇情備忘
+    new_fact_sheet = extract_fact_sheet(thought)
+    
+    # 滾動摘要：turn >= 8 後，每 5 輪重新生成一次
+    new_summary = conversation_summary
+    if turn_count >= 8 and (turn_count % 5 == 0 or not conversation_summary):
+        older_messages = full_history[:-6] if len(full_history) > 6 else []
+        if older_messages:
+            new_summary = await generate_summary(older_messages)
     
     # 更新狀態
-    update_session_state(req.session_id, fraud_stage=stage_label, victim_tags="待標註")
+    update_session_state(
+        req.session_id,
+        fraud_stage=stage_label,
+        victim_tags="待標註",
+        fact_sheet=new_fact_sheet if new_fact_sheet else fact_sheet,
+        conversation_summary=new_summary,
+    )
 
     return ChatResponse(
         reply=reply_segments,
         thought=thought,
-        delay_seconds=delay,
         image_url=image_url
     )
 
@@ -105,6 +121,12 @@ async def monitor_endpoint(session_id: str):
         "history": history,
         "state": state
     }
+
+@app.get("/sessions")
+async def list_sessions():
+    """取得所有 session 清單（供警方監控面板用）。"""
+    from database import get_all_sessions
+    return {"sessions": get_all_sessions()}
 
 class ClearRequest(BaseModel):
     session_id: str

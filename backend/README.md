@@ -34,6 +34,9 @@ uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 - `VLLM_API_URL`：vLLM 介面位址，容器內預設為 `http://vllm_server:8000/v1`
 - `MODEL_NAME`：模型名稱或路徑（由 `llm_client.py` 使用）
 - `DB_PATH`：SQLite 檔案路徑，預設 `/data/chat_history.db`
+- `LINE_CHANNEL_SECRET`：LINE Messaging API channel secret
+- `LINE_CHANNEL_ACCESS_TOKEN`：LINE Messaging API channel access token
+- `LINE_BACKEND_PUBLIC_URL`：可選；LINE 圖片回覆使用的公開網址前綴（留空時會自動從 proxy header 推導）
 
 ## 4. 主要介面
 

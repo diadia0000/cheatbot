@@ -38,9 +38,17 @@ def init_db():
         CREATE TABLE IF NOT EXISTS session_state (
             session_id TEXT PRIMARY KEY,
             fraud_stage TEXT DEFAULT '1_greeting',
-            victim_tags TEXT DEFAULT ''
+            victim_tags TEXT DEFAULT '',
+            conversation_summary TEXT DEFAULT '',
+            fact_sheet TEXT DEFAULT ''
         )
     ''')
+    # 避移：為既有資料庫新增欄位（若已存在則忽略）
+    for col in ["conversation_summary", "fact_sheet"]:
+        try:
+            cursor.execute(f"ALTER TABLE session_state ADD COLUMN {col} TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     conn.close()
 
@@ -79,12 +87,21 @@ def get_chat_history(session_id: str, limit: int = 50) -> List[Dict[str, str]]:
     history = [{"role": row[0], "content": row[1]} for row in rows]
     return history
 
-def update_session_state(session_id: str, fraud_stage: str, victim_tags: str):
+def update_session_state(session_id: str, **kwargs):
+    """更新 session 狀態，只更新傳入的欄位，未傳入的保留原值。"""
+    current = get_session_state(session_id)
+    current.update({k: v for k, v in kwargs.items() if v is not None})
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT OR REPLACE INTO session_state (session_id, fraud_stage, victim_tags) VALUES (?, ?, ?)",
-        (session_id, fraud_stage, victim_tags)
+        """INSERT OR REPLACE INTO session_state
+           (session_id, fraud_stage, victim_tags, conversation_summary, fact_sheet)
+           VALUES (?, ?, ?, ?, ?)""",
+        (session_id,
+         current.get("fraud_stage", "1_greeting"),
+         current.get("victim_tags", ""),
+         current.get("conversation_summary", ""),
+         current.get("fact_sheet", ""))
     )
     conn.commit()
     conn.close()
@@ -93,15 +110,20 @@ def get_session_state(session_id: str) -> Dict[str, str]:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT fraud_stage, victim_tags FROM session_state WHERE session_id = ?",
+        "SELECT fraud_stage, victim_tags, conversation_summary, fact_sheet FROM session_state WHERE session_id = ?",
         (session_id,)
     )
     row = cursor.fetchone()
     conn.close()
     
     if row:
-        return {"fraud_stage": row[0], "victim_tags": row[1]}
-    return {"fraud_stage": "1_greeting", "victim_tags": ""}
+        return {
+            "fraud_stage": row[0],
+            "victim_tags": row[1],
+            "conversation_summary": row[2] or "",
+            "fact_sheet": row[3] or "",
+        }
+    return {"fraud_stage": "1_greeting", "victim_tags": "", "conversation_summary": "", "fact_sheet": ""}
 
 def get_relevant_history(session_id: str, query: str, n_results: int = 3) -> List[Dict[str, str]]:
     if collection is None or not query.strip():
@@ -121,3 +143,30 @@ def get_relevant_history(session_id: str, query: str, n_results: int = 3) -> Lis
     except Exception as e:
         print(f"ChromaDB Query Error: {e}")
         return []
+
+def get_all_sessions() -> List[Dict]:
+    """取得所有 session 清單，含最新訊息時間與對話輪數。"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            ss.session_id,
+            ss.fraud_stage,
+            ss.victim_tags,
+            (SELECT COUNT(*) FROM messages m WHERE m.session_id = ss.session_id AND m.role = 'user') AS turn_count,
+            (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = ss.session_id) AS last_active
+        FROM session_state ss
+        ORDER BY last_active DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "session_id": r[0],
+            "fraud_stage": r[1],
+            "victim_tags": r[2],
+            "turn_count": r[3] or 0,
+            "last_active": r[4] or "",
+        }
+        for r in rows
+    ]

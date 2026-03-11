@@ -1,93 +1,203 @@
 import streamlit as st
 import requests
 import os
-import time
-from components import load_css, render_line_chat, render_monitor_thought
+from components import (
+    load_css,
+    render_session_card,
+    render_line_chat,
+    render_monitor_thought,
+    render_status_badge,
+)
 
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://localhost:8080")
-SESSION_ID = "test_session_001"
 
-st.set_page_config(page_title="Anti-Fraud Simulator", layout="wide")
+st.set_page_config(
+    page_title="LINE Bot 詐騙演練控制台",
+    page_icon="🛡️",
+    layout="wide",
+)
 load_css()
 
-# Sidebar for Navigation
-view_mode = st.sidebar.radio("切換視角", ("受害者視角 (LINE UI)", "警方監控視角 (God Mode)"))
+# ── 側邊欄 ─────────────────────────────────────────────────
+st.sidebar.title("🛡️ 控制台")
 
-if st.sidebar.button("清除歷史紀錄"):
-    requests.post(f"{BACKEND_API_URL}/clear", json={"session_id": SESSION_ID})
-    st.session_state.history = []
-    st.session_state.thought = ""
-    st.sidebar.success("已清除對話狀態！")
+page = st.sidebar.radio("功能", [
+    "即時監控",
+    "對話詳情",
+    "系統狀態",
+])
 
-if "history" not in st.session_state:
-    st.session_state.history = []
-if "thought" not in st.session_state:
-    st.session_state.thought = ""
-
-def fetch_history():
+# ── 共用：取得所有 sessions ────────────────────────────────
+@st.cache_data(ttl=5)
+def fetch_sessions():
     try:
-        res = requests.get(f"{BACKEND_API_URL}/monitor/{SESSION_ID}")
+        res = requests.get(f"{BACKEND_API_URL}/sessions", timeout=5)
         if res.status_code == 200:
-            return res.json().get("history", [])
-    except Exception as e:
-        st.error(f"無法連接到後端 API: {e}")
+            return res.json().get("sessions", [])
+    except Exception:
+        pass
     return []
 
-if view_mode == "受害者視角 (LINE UI)":
-    st.title("LINE 聊天室模擬")
-    
-    st.session_state.history = fetch_history()
-    render_line_chat(st.session_state.history)
-    
-    user_input = st.text_input("輸入訊息...", key="chat_input")
-    if st.button("送出") and user_input:
-        # Optimistic UI Update
-        st.session_state.history.append({"role": "user", "content": user_input})
-        
-        with st.spinner("陳呆呆正在輸入..."):
-            try:
-                res = requests.post(f"{BACKEND_API_URL}/chat", json={
-                    "session_id": SESSION_ID,
-                    "message": user_input
-                })
-                if res.status_code == 200:
-                    data = res.json()
-                    delay = data.get("delay_seconds", 0)
-                    time.sleep(delay)  # 模擬打字延遲
-                    
-                    reply_text = data["reply"]
-                    if data.get("image_url"):
-                        img_url = f"{BACKEND_API_URL}{data['image_url']}"
-                        reply_text += f"\n\n![對帳單]({img_url})"
-                    
-                    st.session_state.history.append({"role": "assistant", "content": reply_text})
-                    st.session_state.thought = data["thought"]
-            except Exception as e:
-                st.error(f"連線失敗: {e}")
-                
-        st.rerun()
 
-elif view_mode == "警方監控視角 (God Mode)":
-    st.title("系統監控後台")
-    
+def fetch_monitor(session_id: str):
     try:
-        res = requests.get(f"{BACKEND_API_URL}/monitor/{SESSION_ID}")
+        res = requests.get(f"{BACKEND_API_URL}/monitor/{session_id}", timeout=5)
         if res.status_code == 200:
-            data = res.json()
-            state = data.get("state", {})
-            history = data.get("history", [])
-            
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                st.subheader("當前對話狀態")
-                st.write(f"**欺詐階段:** {state.get('fraud_stage')}")
-                st.write(f"**受害者標籤:** {state.get('victim_tags')}")
-                
-                st.subheader("最新策略分析")
-                render_monitor_thought(st.session_state.get("thought", "暫無推論記錄"))
-                
-            with col2:
-                st.subheader("完整 Raw History")
-                st.json(history)
-    except Exception as e:
-        st.error(f"無法獲取監控數據: {e}")
+            return res.json()
+    except Exception:
+        pass
+    return None
+
+
+def clear_session(session_id: str):
+    try:
+        requests.post(f"{BACKEND_API_URL}/clear", json={"session_id": session_id}, timeout=5)
+        return True
+    except Exception:
+        return False
+
+
+def check_health():
+    try:
+        res = requests.get(f"{BACKEND_API_URL}/health", timeout=3)
+        return res.status_code == 200
+    except Exception:
+        return False
+
+
+# ═══════════════════════════════════════════════════════════
+# 頁面一：即時監控
+# ═══════════════════════════════════════════════════════════
+if page == "即時監控":
+    st.title("📡 LINE Bot 即時監控")
+    st.caption("自動顯示所有來自 LINE 的活躍對話。點擊左側「對話詳情」進入單一對話分析。")
+
+    if st.button("🔄 重新整理"):
+        st.cache_data.clear()
+
+    sessions = fetch_sessions()
+
+    if not sessions:
+        st.info("目前沒有任何活躍的 LINE 對話。等待使用者從 LINE 發送訊息後，這裡會自動出現。")
+    else:
+        # 統計
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("總對話數", len(sessions))
+        line_sessions = [s for s in sessions if s["session_id"].startswith("line_")]
+        col_b.metric("LINE 對話", len(line_sessions))
+        stage5 = [s for s in sessions if s.get("fraud_stage", "").startswith("5")]
+        col_c.metric("已進入收網階段", len(stage5))
+
+        st.divider()
+
+        for s in sessions:
+            render_session_card(s)
+
+
+# ═══════════════════════════════════════════════════════════
+# 頁面二：對話詳情
+# ═══════════════════════════════════════════════════════════
+elif page == "對話詳情":
+    st.title("🔍 對話詳情")
+
+    sessions = fetch_sessions()
+    session_ids = [s["session_id"] for s in sessions] if sessions else []
+
+    if not session_ids:
+        st.info("尚無可檢視的對話。")
+    else:
+        selected = st.selectbox("選擇對話 Session", session_ids)
+
+        if selected:
+            data = fetch_monitor(selected)
+            if data:
+                state = data.get("state", {})
+                history = data.get("history", [])
+
+                # 頂部狀態列
+                c1, c2, c3 = st.columns(3)
+                c1.metric("詐騙階段", state.get("fraud_stage", "未知"))
+                c2.metric("對話輪數", sum(1 for m in history if m["role"] == "user"))
+                c3.metric("受害者標籤", state.get("victim_tags", "未標註"))
+
+                st.divider()
+
+                col_left, col_right = st.columns([1, 1])
+
+                with col_left:
+                    st.subheader("💬 對話記錄")
+                    render_line_chat(history)
+
+                with col_right:
+                    st.subheader("🧠 AI 策略分析")
+
+                    st.markdown("**劇情備忘**")
+                    st.text(state.get("fact_sheet") or "尚未產生")
+
+                    st.markdown("**對話摘要**")
+                    st.text(state.get("conversation_summary") or "尚未產生（對話滿 8 輪後自動生成）")
+
+                    st.markdown("**最新 AI 獨白**")
+                    render_monitor_thought(state.get("fact_sheet", "暫無推論記錄"))
+
+                st.divider()
+
+                # 操作
+                col_act1, col_act2 = st.columns(2)
+                with col_act1:
+                    if st.button("🗑️ 清除此對話", key=f"clear_{selected}"):
+                        if clear_session(selected):
+                            st.success(f"已清除 {selected}")
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error("清除失敗")
+
+                with col_act2:
+                    with st.expander("📋 Raw JSON"):
+                        st.json(data)
+
+
+# ═══════════════════════════════════════════════════════════
+# 頁面三：系統狀態
+# ═══════════════════════════════════════════════════════════
+elif page == "系統狀態":
+    st.title("⚙️ 系統狀態")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("後端 API")
+        healthy = check_health()
+        render_status_badge("FastAPI Backend", healthy)
+
+        st.subheader("LINE Bot 設定")
+        st.markdown("""
+        **Webhook URL**: `https://<你的公開域名>/line/webhook`
+
+        設定步驟：
+        1. 到 [LINE Developers Console](https://developers.line.biz/) 建立 Messaging API Channel
+        2. 取得 **Channel Secret** 和 **Channel Access Token**
+        3. 設定環境變數 `LINE_CHANNEL_SECRET` 和 `LINE_CHANNEL_ACCESS_TOKEN`
+        4. 在 LINE Console 設定 Webhook URL 指向你的伺服器
+        5. 重啟 docker compose
+        """)
+
+    with col2:
+        st.subheader("環境變數檢查")
+        env_vars = [
+            ("BACKEND_API_URL", BACKEND_API_URL),
+            ("LINE_CHANNEL_SECRET", "已設定" if os.getenv("LINE_CHANNEL_SECRET") else "❌ 未設定"),
+            ("LINE_CHANNEL_ACCESS_TOKEN", "已設定" if os.getenv("LINE_CHANNEL_ACCESS_TOKEN") else "❌ 未設定"),
+        ]
+        for name, val in env_vars:
+            st.text(f"{name}: {val}")
+
+        st.subheader("快速操作")
+        if st.button("🗑️ 清除所有對話"):
+            sessions = fetch_sessions()
+            for s in sessions:
+                clear_session(s["session_id"])
+            st.cache_data.clear()
+            st.success("已清除所有對話！")
+            st.rerun()
