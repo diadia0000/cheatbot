@@ -5,7 +5,6 @@
 
 import datetime
 import time
-import random
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Optional
@@ -130,46 +129,6 @@ def get_top_stocks(n: int = 10) -> List[Dict]:
         _cache_timestamp = time.time()
 
     return stocks[:n]
-
-
-def get_stocks_for_image(n: int = 7) -> List[Dict]:
-    """
-    取得用於生成獲利圖片的股票資料。
-    至少 n 檔，其中多數為正報酬，混入 1~2 檔微虧以增加可信度。
-    漲幅會稍微誇大（但不離譜）。
-    """
-    top = get_top_stocks(n=10)
-    if len(top) < n:
-        return top
-
-    # 選取前 n-1 檔漲最多的（正報酬）
-    gainers = [s for s in top if s["pct_change"] > 0][:n - 1]
-
-    # 從所有資料中找 1~2 檔微虧的（pct_change 在 -5% ~ 0% 之間）
-    with _cache_lock:
-        all_stocks = _cached_stocks
-
-    slight_losers = [s for s in all_stocks if -5.0 < s["pct_change"] < 0]
-    if slight_losers:
-        losers = random.sample(slight_losers, min(1, len(slight_losers)))
-    else:
-        # 如果沒有微虧的，造一檔小虧
-        losers = []
-        if gainers:
-            fake_loser = gainers[-1].copy()
-            fake_loser["pct_change"] = round(random.uniform(-3.0, -0.5), 2)
-            losers = [fake_loser]
-
-    selected = gainers + losers
-    random.shuffle(selected)
-
-    # 對正報酬的股票稍微誇大漲幅（+1~3%），但不超過 10%
-    for s in selected:
-        if s["pct_change"] > 0:
-            boost = round(random.uniform(1.0, 3.0), 2)
-            s["pct_change"] = round(min(s["pct_change"] + boost, 10.0), 2)
-
-    return selected
 
 
 def get_stock_prompt_injection() -> str:

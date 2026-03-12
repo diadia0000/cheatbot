@@ -36,13 +36,13 @@ uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 - `DB_PATH`：SQLite 檔案路徑，預設 `/data/chat_history.db`
 - `LINE_CHANNEL_SECRET`：LINE Messaging API channel secret
 - `LINE_CHANNEL_ACCESS_TOKEN`：LINE Messaging API channel access token
-- `LINE_BACKEND_PUBLIC_URL`：可選；LINE 圖片回覆使用的公開網址前綴（留空時會自動從 proxy header 推導）
+- `LINE_BACKEND_PUBLIC_URL`：可選；公開網址前綴（留空時會自動從 proxy header 推導）
 
 ## 4. 主要介面
 
 1. `POST /chat`
 - 輸入參數：`session_id`, `message`
-- 輸出參數：`reply`（分段列表）, `thought`, `delay_seconds`, `image_url`
+- 輸出參數：`reply`（分段列表）, `thought`
 
 2. `GET /monitor/{session_id}`
 - 回傳會話歷史與狀態，用於警方監控視角。
@@ -51,10 +51,6 @@ uvicorn main:app --host 0.0.0.0 --port 8080 --reload
 - 輸入參數：`session_id`
 - 清理 SQLite 與 ChromaDB 中該會話的紀錄。
 
-4. `GET /image`
-- 回傳生成圖片（`assets/generated-picture.png`）。
-
 ## 5. 開發提示
 
 - 聊天介面會把 AI 回覆依 `|SPLIT|` 拆段。
-- 當模型回覆中包含 `<send_image></send_image>` 時，會觸發圖片生成邏輯。

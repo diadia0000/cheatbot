@@ -1,6 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from database import init_db, save_message, get_chat_history, update_session_state, get_session_state, get_relevant_history
@@ -25,7 +24,6 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: list[str]
     thought: str
-    image_url: str | None = None
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
@@ -59,15 +57,8 @@ async def chat_endpoint(req: ChatRequest):
     new_stage = detect_stage(thought, turn_count, current_stage)
     stage_label = STAGE_MAP.get(new_stage, f"{new_stage}_unknown")
     
-    image_url = None
-    if "<send_image></send_image>" in reply:
-        reply = reply.replace("<send_image></send_image>", "").strip()
-        from image_generator import generate_profit_image
-        try:
-            generate_profit_image(session_id=req.session_id)
-            image_url = f"/image?session_id={req.session_id}"
-        except Exception as e:
-            print(f"Error generating image: {e}")
+    # 移除 LLM 可能殘留的 <send_image> 標籤
+    reply = reply.replace("<send_image></send_image>", "").strip()
 
     # 處理多段訊息分割
     reply_segments = [seg.strip() for seg in reply.split("|SPLIT|") if seg.strip()]
@@ -97,20 +88,7 @@ async def chat_endpoint(req: ChatRequest):
     return ChatResponse(
         reply=reply_segments,
         thought=thought,
-        image_url=image_url
     )
-
-@app.get("/image")
-async def get_image(session_id: str = Query(default="default")):
-    # 先嘗試 session 專屬圖片
-    session_path = os.path.join(os.path.dirname(__file__), "assets", f"generated-{session_id}.png")
-    if os.path.exists(session_path):
-        return FileResponse(session_path, media_type="image/png")
-    # Fallback 到預設圖片
-    default_path = os.path.join(os.path.dirname(__file__), "assets", "generated-default.png")
-    if os.path.exists(default_path):
-        return FileResponse(default_path, media_type="image/png")
-    raise HTTPException(status_code=404, detail="Image not found")
 
 @app.get("/monitor/{session_id}")
 async def monitor_endpoint(session_id: str):

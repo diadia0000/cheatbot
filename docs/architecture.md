@@ -6,12 +6,11 @@
 flowchart LR
     LINEUser["LINE 使用者\n(受害者視角)"]
     LINEPlatform["LINE Platform"]
-    Nginx["Nginx Gateway\n(webhook_gateway)"]
+    Nginx["Nginx Gateway(webhook_gateway)"]
     FastAPI["FastAPI Backend\n(業務邏輯 / 階段追蹤 / RAG)"]
     SQLite[("SQLite DB\n(會話歷史 + 階段狀態)")]
     ChromaDB[("ChromaDB\n(向量長期記憶 RAG)")]
-    vLLM["vLLM Server\n(Qwen2.5-14B-AWQ @ GPU)"]
-    FalAPI{"Fal.ai Cloud API\n(Flux Image-to-Image)"}
+    vLLM["vLLM Server\n(Qwen2.5-32B-AWQ @ GPU)"]
     FinMind{"FinMind API\n(台股即時行情)"}
     MarketData["market_data.py\n(股價篩選 + 快取)"]
     StageDetect["detect_stage()\n(輪數 + thought 雙重判斷)"]
@@ -28,8 +27,6 @@ flowchart LR
     StageDetect -->|"parse &lt;thought&gt;"| vLLM
     FastAPI -->|"Stage ≥ 2: 注入股票"| MarketData
     MarketData -->|"批量查詢 (ThreadPool)"| FinMind
-    FastAPI -->|"&lt;send_image&gt; 觸發"| FalAPI
-    MarketData -->|"股票資料 → prompt"| FalAPI
 ```
 
 ## 對話流程（階段推進）
@@ -45,20 +42,16 @@ flowchart TD
     Inject --> LLM
     LLM --> ParseThought["解析 &lt;thought&gt; 標籤"]
     ParseThought --> DetectStage["detect_stage(thought, turns, current)\n只進不退"]
-    DetectStage --> CheckImage{"回覆含\n&lt;send_image&gt;?"}
-    CheckImage -->|Yes| GenImage["generate_profit_image(session_id)\n→ FinMind 取股票\n→ Fal.ai 生圖"]
-    CheckImage -->|No| Split
-    GenImage --> Split["|SPLIT| 分段"]
-    Split --> Delay[計算擬真打字延遲]
-    Delay --> UpdateState[更新 fraud_stage]
-    UpdateState --> Reply([透過 LINE Reply API 回傳多段訊息 + 圖片])
+    DetectStage --> Split["|SPLIT| 分段"]
+    Split --> UpdateState[更新 fraud_stage]
+    UpdateState --> Reply([透過 LINE Reply API 回傳多段訊息])
 ```
 
 ## 服務元件說明
 
 | 服務 | 容器名稱 | 說明 |
 |------|----------|------|
-| **vLLM Server** | `vllm_server` | 本地 GPU 推理引擎，部署 Qwen2.5-14B-AWQ 模型 |
+| **vLLM Server** | `vllm_server` | 本地 GPU 推理引擎，部署 Qwen2.5-32B-AWQ 模型 |
 | **FastAPI Backend** | `fastapi_backend` | 核心業務邏輯，處理對話、階段追蹤、RAG 記憶、LINE Webhook |
 | **Webhook Gateway** | `webhook_gateway` | Nginx 反向代理，僅暴露 LINE Webhook 路由 |
 

@@ -18,7 +18,6 @@ from linebot.v3.messaging import (
     Configuration,
     ReplyMessageRequest,
     TextMessage,
-    ImageMessage,
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
@@ -50,23 +49,6 @@ line_bot_api = AsyncMessagingApi(async_api_client)
 parser = WebhookParser(LINE_CHANNEL_SECRET)
 
 
-def _get_public_base_url(request: Request) -> str:
-    """Resolve a public base URL from env first, then proxy headers.
-
-    This keeps image replies working when running behind ngrok.
-    """
-    configured = os.getenv("LINE_BACKEND_PUBLIC_URL", "").rstrip("/")
-    if configured:
-        return configured
-
-    forwarded_proto = request.headers.get("x-forwarded-proto", "").strip()
-    forwarded_host = request.headers.get("x-forwarded-host", "").strip()
-    if forwarded_proto and forwarded_host:
-        return f"{forwarded_proto}://{forwarded_host}".rstrip("/")
-
-    return str(request.base_url).rstrip("/")
-
-
 def _make_session_id(line_user_id: str) -> str:
     """將 LINE user ID 轉為 session_id，加上 prefix 方便辨識。"""
     return f"line_{line_user_id}"
@@ -87,8 +69,6 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid signature")
 
-    backend_url = _get_public_base_url(request)
-
     for event in events:
         if not isinstance(event, MessageEvent):
             continue
@@ -101,7 +81,7 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
         session_id = _make_session_id(line_user_id)
 
         # ── 走既有的聊天流程 ──────────────────────────
-        reply_text, image_url = await _process_chat(session_id, user_message)
+        reply_text = await _process_chat(session_id, user_message)
 
         # ── 回覆 LINE ────────────────────────────────
         messages = []
@@ -112,15 +92,6 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
 
         for seg in segments:
             messages.append(TextMessage(text=seg))
-
-        if image_url:
-            # image_url 是 backend 內部路徑，需組成完整 URL
-            if backend_url:
-                full_url = f"{backend_url}{image_url}"
-                messages.append(ImageMessage(
-                    original_content_url=full_url,
-                    preview_image_url=full_url,
-                ))
 
         # LINE reply API 最多 5 則訊息
         await line_bot_api.reply_message(
@@ -135,7 +106,7 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
 
 async def _process_chat(session_id: str, user_message: str):
     """
-    複用 main.py 中 chat_endpoint 的核心邏輯，回傳 (reply_text, image_url | None)。
+    複用 main.py 中 chat_endpoint 的核心邏輯，回傳 reply_text。
     """
     # 儲存使用者訊息
     save_message(session_id, "user", user_message)
@@ -169,16 +140,8 @@ async def _process_chat(session_id: str, user_message: str):
     new_stage = detect_stage(thought, turn_count, current_stage)
     stage_label = STAGE_MAP.get(new_stage, f"{new_stage}_unknown")
 
-    # 圖片處理
-    image_url = None
-    if "<send_image></send_image>" in reply:
-        reply = reply.replace("<send_image></send_image>", "").strip()
-        from image_generator import generate_profit_image
-        try:
-            generate_profit_image(session_id=session_id)
-            image_url = f"/image?session_id={session_id}"
-        except Exception as e:
-            print(f"Error generating image: {e}")
+    # 移除 LLM 可能殘留的 <send_image> 標籤
+    reply = reply.replace("<send_image></send_image>", "").strip()
 
     # 儲存回覆
     reply_segments = [seg.strip() for seg in reply.split("|SPLIT|") if seg.strip()]
@@ -203,4 +166,4 @@ async def _process_chat(session_id: str, user_message: str):
         conversation_summary=new_summary,
     )
 
-    return reply, image_url
+    return reply

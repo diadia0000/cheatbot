@@ -5,6 +5,5 @@ openai
 requests
 FinMind
 chromadb
-fal_client
 line-bot-sdk>=3.5.0
 opencc-python-reimplemented
