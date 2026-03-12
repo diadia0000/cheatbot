@@ -36,7 +36,6 @@ services:
     environment:
       - VLLM_API_URL=http://vllm_server:8000/v1
       - MODEL_NAME=/models/Qwen2.5-32B-Instruct-AWQ
-      - FAL_KEY=${FAL_KEY}
       - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
       - LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN}
       - LINE_BACKEND_PUBLIC_URL=${LINE_BACKEND_PUBLIC_URL}
