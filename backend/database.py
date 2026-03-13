@@ -78,12 +78,15 @@ def get_chat_history(session_id: str, limit: int = 50) -> List[Dict[str, str]]:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?",
+        "SELECT role, content FROM ("
+        "  SELECT role, content, timestamp FROM messages"
+        "  WHERE session_id = ? ORDER BY timestamp DESC LIMIT ?"
+        ") sub ORDER BY timestamp ASC",
         (session_id, limit)
     )
     rows = cursor.fetchall()
     conn.close()
-    
+
     history = [{"role": row[0], "content": row[1]} for row in rows]
     return history
 

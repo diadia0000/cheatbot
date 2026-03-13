@@ -193,8 +193,8 @@ main() {
   if ! $FORCE; then
     echo -e "${RED}${BOLD}⚠️  警告：此操作將永久刪除所有對話記錄與向量記憶，無法復原！${RESET}"
     echo ""
-    read -rp "$(echo -e "${BOLD}確認要清空所有資料嗎？請輸入 YES 繼續：${RESET} ")" confirm
-    if [[ "$confirm" != "YES" ]]; then
+    read -rp "$(echo -e "${BOLD}確認要清空所有資料嗎？請輸入 Y 繼續：${RESET} ")" confirm
+    if [[ "$confirm" != "Y" ]]; then
       echo ""
       info "操作已取消。"
       exit 0
