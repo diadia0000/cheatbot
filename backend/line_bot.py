@@ -21,14 +21,14 @@ from linebot.v3.messaging import (
 )
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 
-from database import (
+from Desktop.nttu.cheet_bot.backend.database import (
     save_message,
     get_chat_history,
     update_session_state,
     get_session_state,
     get_relevant_history,
 )
-from llm_client import (
+from Desktop.nttu.cheet_bot.backend.llm_client import (
     generate_reply,
     detect_stage,
     STAGE_MAP,

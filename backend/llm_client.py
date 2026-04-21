@@ -5,7 +5,7 @@ from openai import AsyncOpenAI
 from typing import List, Dict, Tuple, Optional
 import opencc
 
-from tools.market_data import get_stock_prompt_injection
+from Desktop.nttu.cheet_bot.backend.tools.market_data import get_stock_prompt_injection
 
 _s2t = opencc.OpenCC('s2t')
 

@@ -2,9 +2,9 @@ import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from database import init_db, save_message, get_chat_history, update_session_state, get_session_state, get_relevant_history
-from llm_client import generate_reply, detect_stage, STAGE_MAP, extract_fact_sheet, generate_summary
-from line_bot import router as line_router
+from Desktop.nttu.cheet_bot.backend.database import init_db, save_message, get_chat_history, update_session_state, get_session_state, get_relevant_history
+from Desktop.nttu.cheet_bot.backend.llm_client import generate_reply, detect_stage, STAGE_MAP, extract_fact_sheet, generate_summary
+from Desktop.nttu.cheet_bot.backend.line_bot import router as line_router
 
 app = FastAPI(title="Anti-Fraud Agent Backend")
 app.include_router(line_router, prefix="/line", tags=["LINE Bot"])
@@ -103,7 +103,7 @@ async def monitor_endpoint(session_id: str):
 @app.get("/sessions")
 async def list_sessions():
     """取得所有 session 清單（供警方監控面板用）。"""
-    from database import get_all_sessions
+    from Desktop.nttu.cheet_bot.backend.database import get_all_sessions
     return {"sessions": get_all_sessions()}
 
 class ClearRequest(BaseModel):
@@ -121,7 +121,7 @@ async def clear_session(req: ClearRequest):
     conn.close()
     
     # 清除 ChromaDB 資料
-    from database import collection
+    from Desktop.nttu.cheet_bot.backend.database import collection
     if collection is not None:
         try:
             collection.delete(where={"session_id": req.session_id})
