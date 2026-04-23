@@ -1,4 +1,13 @@
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
+![LINE](https://img.shields.io/badge/LINE-00C300?style=for-the-badge&logo=line&logoColor=white)
+
 # Cheet Bot 專案說明
+
+> [!WARNING]
+> **這個系統只能拿去做教育用途，不可以拿去做壞事。**
 
 這是一個詐騙對話模擬系統，透過 LINE Bot 作為使用者介面。包含：
 
@@ -118,3 +127,7 @@ source .venv/bin/activate
 3. 對話歷史異常
 
 - 資料預設寫入 `data/`，可先備份後清理再重啟。
+
+## 6. License
+
+本專案採用 [MIT License](./LICENSE)。
